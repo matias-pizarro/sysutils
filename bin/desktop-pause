@@ -181,7 +181,7 @@ case ${SIGNAL} in
 esac
 
 pkill -SIGUSR1 herbe2
-${HOME}/.local/bin/herbe2 "${MSG}"
+herbe2 "${MSG}"
 
 if [ "${MIN}" = "1" -a "${SIGNAL}" = "STOP" ]
 then
