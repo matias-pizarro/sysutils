@@ -1,0 +1,225 @@
+#! /usr/bin/env bash
+
+conf="${1}"
+direction="${2:-toggle}"
+
+if [ "${conf}" = "cpu" ]; then
+    core_type="efficiency"
+elif [ "${conf}" = "cpu_e" ]; then
+    conf="cpu"
+    core_type="efficiency"
+elif [ "${conf}" = "cpu_p" ]; then
+    conf="cpu"
+    core_type="performance"
+fi
+
+kill_message() {
+    pkill -SIGUSR1 herbe1
+    pkill -SIGUSR1 herbe2
+    pkill -SIGUSR1 herbe4
+    pkill -SIGUSR1 herbe8
+    pkill -SIGUSR1 herbe60
+}
+
+message() {
+    if [ -n "${DISPLAY}" ]; then
+        kill_message
+        herbe1 "${1}" &
+    fi
+}
+
+message_2() {
+    if [ -n "${DISPLAY}" ]; then
+        kill_message
+        herbe2 "${1}" &
+    fi
+}
+
+message_4() {
+    if [ -n "${DISPLAY}" ]; then
+        kill_message
+        herbe4 "${1}" &
+    fi
+}
+
+message_8() {
+    if [ -n "${DISPLAY}" ]; then
+        kill_message
+        herbe8 "${1}" &
+    fi
+}
+
+message_persist() {
+    if [ -n "${DISPLAY}" ]; then
+        if [ "$(ps axwww -o command | grep herbe60 | wc -l | command tr -d ' ')" == "1" ]; then
+            kill_message
+            herbe60 "${1}" &
+        else
+            kill_message
+        fi
+    fi
+}
+
+current_mute() {
+    mixer ${1}.mute | awk -F '=' '{print $NF}'
+}
+
+current_volume() {
+    mixer ${1}.volume | awk -F ':' '{print $NF}'
+}
+
+current_volume_per100() {
+    per100=$(echo "$(current_volume ${1}) * 100" | bc -l)
+    sed -e 's|\.00||g' <<< ${per100}
+}
+
+current_volume_formatted() {
+    if [ "$(current_mute ${1})" == "off" ]; then muted=""; else muted=" [muted]"; fi
+    echo "${1}: $(current_volume_per100 ${1})%${muted}"
+}
+
+current_cpu_e() {
+    echo $((100-$(sysctl dev.hwpstate_intel.0.epp | awk -F ': ' '{print $NF}')))
+}
+
+current_cpu_p() {
+    echo $((100-$(sysctl dev.hwpstate_intel.8.epp | awk -F ': ' '{print $NF}')))
+}
+
+current_cpu() {
+    if [ "${core_type}" = "efficiency" ]; then
+        current_cpu_e
+    else
+        current_cpu_p
+    fi
+}
+
+current_load() {
+    top -s 1 -d 1 0 | grep -m 1 averages | sed 's/;//g' | sed 's/,//g' | awk '{ print $4" "$5" "$6" "$7" "$8 }'
+}
+
+current_swap() {
+    top -s 1 -d 1 0 | grep -m 1 Swap | sed 's/,/ |/g' | sed 's/Free/Freeseparator/g' | awk -F 'separator' '{ print $1 }'
+}
+
+total_mem() {
+    echo "$(($(sysctl hw.physmem | awk -F ': ' '{ print $2 }') / 1000000000))G Total"
+}
+
+free_mem() {
+    top -s 1 -d 1 0 | grep -m 1 Mem | awk -F ', ' '{ print $6 }'
+}
+
+current_backlight() {
+    backlight -f /dev/backlight/backlight0 | awk '{print $NF}'
+}
+
+current_temp() {
+    sysctl -a | grep temperature | sort | sed 's|dev.|    dev.|g' | sed 's|hw.|    hw.|g'
+}
+
+current_status() {
+    echo "BATTERY:"
+    msg=$(acpiconf -i 0 | egrep 'State|Remain|Present')
+    echo $msg | awk -F ' ' '{print "    "$1"              "$2}'
+    echo $msg | awk -F ' ' '{print "    "$3" "$4" "$5}'
+    echo $msg | awk -F ' ' '{print "    "$6" "$7"     "$8}'
+    echo $msg | awk -F ' ' '{print "    "$9" "$10"       "$11" "$12" "$13" "$14}'
+    echo $msg | awk -F ' ' '{print "    "$15" "$16"    "$17" "$18}'
+    echo ""
+    echo "WIFI:"
+    msg=$(ifconfig wlan0)
+    echo $msg | awk -F 'ssid' '{print $2}' | awk -F 'channel' '{print "  ssid   " $1}'
+    echo $msg | awk -F 'inet' '{print $2}' | awk -F 'netmask' '{print "  inet   " $1}'
+    echo $msg | awk -F 'status:' '{print $2}' | awk -F 'nd6'  '{print "  status " $1}'
+    echo ""
+    echo "SYSTEM:"
+    echo "    $(current_load)"
+    echo "    cpu:  $(current_cpu_e)% | $(current_cpu_p)% [eff/perf]"
+    echo "    mem:  $(total_mem) | $(free_mem)"
+    echo "    $(current_swap)"
+    echo ""
+    echo "BACKLIGHT: $(current_backlight)%"
+    echo ""
+    echo "SOUND:"
+    echo "    $(current_volume_formatted vol)"
+    echo "    $(current_volume_formatted rec)"
+    echo ""
+    if [ "$(whoami)" = "mpizarro" ]; then
+        source ${HOME}/.tmp/ssh-agent 1> /dev/null    2> /dev/null
+        echo "SSH:"
+        echo "$(ssh-add -l | awk -F ' ' '{print "    " $3 " " $4}')"
+        echo ""
+    fi
+    echo "TEMPERATURE:"
+    echo "$(current_temp)"
+    echo ""
+}
+
+shift_cpu() {
+    ncpu=$(sysctl -n hw.ncpu)
+    max_cpu_id=$((${ncpu}-1))
+    val=${1:-100}
+    if [ ${val} -lt 1 ]; then val=0; fi
+    if [ ${val} -gt 100 ]; then val=100; fi
+    val=$((100-${val}))
+    for cpu_id in $(seq 0 1 $((${ncpu}-1))); do
+        if [ "${core_type}" = "efficiency" ] && (( ${cpu_id} < 8 )); then
+            doas sysctl dev.hwpstate_intel.${cpu_id}.epp=${val}
+	elif [ "${core_type}" = "performance" ] && (( ${cpu_id} > 7 )); then
+            doas sysctl dev.hwpstate_intel.${cpu_id}.epp=${val}
+    	fi
+    done
+}
+
+if [ "${conf}" == "cpu" ]; then
+    if [ "${direction}" == "toggle" ]; then
+        # If we are at anything different from 0% (100) we go to 0%
+        if [ "$(current_cpu)" == "100" ]; then
+            shift_cpu 0
+        else
+            shift_cpu 100
+        fi
+    else
+        if [ "${direction}" == "+" ]; then
+            val=$(($(current_cpu)+5))
+        elif [ "${direction}" == "-" ]; then
+            val=$(($(current_cpu)-5))
+        else
+            val=$((100-${direction}))
+        fi
+        shift_cpu ${val}
+    fi
+    perc=$(current_cpu)
+        message "cpu:  $(current_cpu_e)% | $(current_cpu_p)%     (eff|perf) "
+elif [ "${conf}" == "backlight" ]; then
+    if [ "${direction}" == "toggle" ]; then
+        # If we are at anything different from 0% (0) we go to 0%
+        if [ "$(current_backlight)" == "0" ]; then
+            backlight 100
+        else
+            backlight 0
+        fi
+    else
+        backlight ${direction} 1
+    fi
+    message "backlight: $(current_backlight)%"
+elif [ "${conf}" == "status" ]; then
+    if [ "$(ps axwww -o command | grep herbe60 | wc -l | command tr -d ' ')" == "1" ]; then
+        message_persist "$(current_status)"
+    else
+        kill_message
+    fi
+elif [ "${conf}" == "wlan0" ]; then
+    message_2 "$(reset_wlan0 "${direction}")"
+else
+    if [ "${direction}" == "toggle" ]; then
+        mixer ${conf}.mute=^
+    else
+        mixer ${conf}.volume=${direction}0.01
+    fi
+    if [ "$(current_mute ${conf})" == "off" ]; then muted=""; else muted=" [muted]"; fi
+    message "${conf}: $(current_volume_per100 ${conf})%${muted}"
+fi
+
+exit 0

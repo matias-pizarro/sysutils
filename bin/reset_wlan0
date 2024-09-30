@@ -1,0 +1,18 @@
+#! /bin/sh
+
+pkill -SIGUSR1 herbe1
+pkill -SIGUSR1 herbe2
+pkill -SIGUSR1 herbe4
+pkill -SIGUSR1 herbe8
+
+if [ "${1}" = "down" ]; then
+    direction="off"
+    ifconfig_direction="down"
+else
+    direction="on"
+    ifconfig_direction="up"
+    doas ifconfig wlan0 down
+fi
+
+doas ifconfig wlan0 "${ifconfig_direction}"
+echo "Turning wlan0 ${direction}"

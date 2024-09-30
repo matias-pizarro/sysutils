@@ -1,0 +1,54 @@
+#!/bin/sh
+
+if [ "${HOME}" = "/" ]; then
+    exit 0
+fi
+
+CHARGE_THRESHOLD=21
+SLEEP_DELAY=20
+LOGGER="logger -t acpi_cmbat -p daemon.notice"
+
+SOURCE="${1:-manual}"
+TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
+REMAINING_CAPACITY=$(acpiconf -i0 | egrep 'Remaining capacity' \
+    | awk -F ' ' '{print $NF}' | tr -d '%')
+STATE=$(acpiconf -i0 | egrep 'State' | awk -F ' ' '{print $NF}')
+if [ "${STATE}" = "discharging" ]; then
+    GO_TO_SLEEP=$(echo "${REMAINING_CAPACITY} <= ${CHARGE_THRESHOLD}" | bc)
+else
+    GO_TO_SLEEP="0"
+fi
+
+if [ "${SOURCE}" = "0x80" ]; then
+    # acpi event source is always 0x80
+    STATE_V="$(acpiconf -i0 | egrep 'State')"
+    REMAIN_V="$(acpiconf -i0 | egrep 'Remain')"
+    PRESENT_V="$(acpiconf -i0 | egrep 'Present')"
+    ${LOGGER} "CMBAT notify = ${SOURCE}"
+    ${LOGGER} "${STATE_V}"
+    ${LOGGER} "${REMAIN_V}"
+    ${LOGGER} "${PRESENT_V}"
+elif [ "${SOURCE}" = "manual" ]; then
+    echo ""
+    acpiconf -i0 | egrep 'State|Remain|Present'
+    echo ""
+fi
+
+if [ "${GO_TO_SLEEP}" = "1" ]; then
+    pkill -SIGUSR1 herbe4
+    herbe4 "$(
+        echo "Going to sleep in ${SLEEP_DELAY}s"
+        echo "${STATE}"
+        echo "Remaining capacity: ${REMAINING_CAPACITY}%"
+    )" &
+    sleep ${SLEEP_DELAY} && /usr/sbin/zzz
+else
+    if [ ! "${SOURCE}" = "0x80" ]; then
+        pkill -SIGUSR1 herbe4
+        herbe4 "$(
+            echo "Not going to sleep yet"
+            echo "${STATE}"
+            echo "Remaining capacity: ${REMAINING_CAPACITY}%"
+        )" &
+    fi
+fi
