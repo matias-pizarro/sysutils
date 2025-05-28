@@ -4,6 +4,10 @@ if [ "${HOME}" = "/" ]; then
     exit 0
 fi
 
+export DISPLAY=:0
+export XAUTHORITY=$(\ls /tmp/xauth_*)
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+
 CHARGE_THRESHOLD=21
 SLEEP_DELAY=20
 LOGGER="logger -t acpi_cmbat -p daemon.notice"
@@ -18,6 +22,19 @@ if [ "${STATE}" = "discharging" ]; then
 else
     GO_TO_SLEEP="0"
 fi
+
+last_digit=$(echo "${REMAINING_CAPACITY}" | rev | cut -c 1,1)
+
+if [ ${REMAINING_CAPACITY} -le 30 -a "${STATE}" = "discharging" ]; then
+	kdialog --error "Battery capacity is <b>${REMAINING_CAPACITY}%</b>"
+elif [ ${REMAINING_CAPACITY} -lt 80 -a ${last_digit} = 0 -a "${STATE}" = "discharging" ]; then
+	kdialog --passivepopup "$(
+		echo "Remainin battery capacity: <b>${REMAINING_CAPACITY}%</b>"
+		echo "[${STATE}]"
+	)" 3
+fi
+
+exit
 
 if [ "${SOURCE}" = "0x80" ]; then
     # acpi event source is always 0x80

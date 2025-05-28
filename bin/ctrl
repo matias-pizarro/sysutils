@@ -128,10 +128,20 @@ current_status() {
     echo $msg | awk -F ' ' '{print "    "$15" "$16"    "$17" "$18}'
     echo ""
     echo "WIFI:"
-    msg=$(ifconfig wlan0)
-    echo $msg | awk -F 'ssid' '{print $2}' | awk -F 'channel' '{print "  ssid   " $1}'
-    echo $msg | awk -F 'inet' '{print $2}' | awk -F 'netmask' '{print "  inet   " $1}'
-    echo $msg | awk -F 'status:' '{print $2}' | awk -F 'nd6'  '{print "  status " $1}'
+    msg=$(wpa_cli status)
+    if [ "$(echo ${msg} | grep p2p_device_address | wc -l | command tr -d ' ')" = "1" ]; then
+	wifi_mode=wifibox
+    else
+	wifi_mode=wlan
+    fi
+    ssid=$(echo $msg | awk -F ' ssid=' '{print $2}' | awk -F ' id=' '{print $1}')
+    bssid=$(echo $msg | awk -F ' bssid=' '{print $2}' | awk -F ' freq=' '{print $1}')
+    echo "  mode   ${wifi_mode}"
+    echo "  ssid   ${ssid} (${bssid})"
+    ip_address=$(echo $msg | sed 's|p2p_device_address|address|g' | awk -F ' ip_address=' '{print $2}' | awk -F ' address=' '{print $1}')
+    mac_address=$(echo $msg | awk -F ' address=' '{print $2}' | awk -F ' uuid=' '{print $1}')
+    echo "  inet   ${ip_address} (${mac_address})"
+    echo $msg | awk -F 'wpa_state=' '{print $2}' | awk -F ' ip_address='  '{print "  status " $1}'
     echo ""
     echo "SYSTEM:"
     echo "    $(current_load)"
@@ -143,6 +153,7 @@ current_status() {
     echo ""
     echo "SOUND:"
     echo "    $(current_volume_formatted vol)"
+    echo "    $(current_volume_formatted pcm)"
     echo "    $(current_volume_formatted rec)"
     echo ""
     if [ "$(whoami)" = "mpizarro" ]; then
@@ -217,6 +228,7 @@ else
         mixer ${conf}.mute=^
     else
         mixer ${conf}.volume=${direction}0.01
+        mixer pcm.volume=${direction}0.01
     fi
     if [ "$(current_mute ${conf})" == "off" ]; then muted=""; else muted=" [muted]"; fi
     message "${conf}: $(current_volume_per100 ${conf})%${muted}"
